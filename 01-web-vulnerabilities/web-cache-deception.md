@@ -138,6 +138,75 @@ Targets origin normalization rules by starting with a static cache path.
 
     Mechanism: The CDN sees /static/js/ at the start and marks it cacheable. The backend normalizes ..%2f to navigate up to /dashboard.
 
+Web Cache Deception relies entirely on getting two different systems—the Cache Server (CDN/Proxy) and the Origin Server (Backend Framework)—to interpret the exact same URL string in two completely different ways:
+
+    The Cache Server looks at the URL to decide: "Is this a public static asset that I should store in memory?"
+
+    The Origin Server looks at the URL to decide: "Which dynamic code controller should I execute to generate the response?"
+
+Different path manipulation techniques are used depending on how strictly the target application and CDN parse URLs.
+
+1. Standard Path Extension (/path/style.css)
+How It Works
+
+You append a static file extension directly to the end of a valid dynamic endpoint.
+
+    Example URL: [https://example.com/account/settings/style.css](https://example.com/account/settings/style.css)
+
+Why Use It?
+
+This is the simplest technique and works against non-strict, REST-style backend routers (e.g., Express.js, Django, Ruby on Rails, or Spring) that use wildcard or path-prefix matching.
+
+    Backend View: The framework matches the prefix /account/settings and simply ignores or strips the extra trailing segment /style.css, returning the private user settings page.
+
+    Cache View: The CDN checks the end of the URL path string, sees .css, and marks the response as a cacheable static asset.
+
+When to Use
+
+Use this first as your baseline test. It is effective against modern single-page apps (SPAs) or backend APIs where the framework router handles path parameters flexibly.
+2. Delimiter Injection (/path;style.css or /path%23style.css)
+How It Works
+
+You insert special characters (delimiters) between the dynamic route and the fake static extension to trick the backend parser into truncating the path early.
+
+    Example URLs:
+
+        Matrix parameters: [https://example.com/account/settings;style.css](https://example.com/account/settings;style.css)
+
+        Fragment encoding: [https://example.com/account/settings%23style.css](https://example.com/account/settings%23style.css)
+
+        Query encoding: [https://example.com/account/settings%3Fstyle.css](https://example.com/account/settings%3Fstyle.css)
+
+Why Use It?
+
+If standard path extensions return a 404 Not Found because the backend router enforces strict path matching, delimiter injection is used to force path truncation on the backend while keeping the extension visible to the CDN.
+
+    Backend View: Frameworks like Java/Spring interpret ; as a matrix parameter delimiter, or treat %23 (#) / %3F (?) as the start of non-path data. The backend stops reading the path at the delimiter and executes /account/settings.
+
+    Cache View: Most CDNs evaluate raw, unencoded URL strings without decoding percent-encoded characters like %23 or parsing frame-specific matrix parameters ;. The CDN reads the entire string to the end, sees .css, and treats it as a static file key.
+
+When to Use
+
+Use this when standard path extensions fail with a 404 or 400 error, particularly on enterprise frameworks (like Java Spring or ASP.NET) or when a reverse proxy normalizes paths differently than the backend.
+3. Path Traversal / Normalization Mismatch (/static/..%2f/account)
+How It Works
+
+You structure the URL so it begins with a known, legitimate static directory path, followed by path traversal sequences pointing back to a dynamic endpoint.
+
+    Example URL: [https://example.com/assets/css/..%2f..%2faccount/profile](https://example.com/assets/css/..%2f..%2faccount/profile)
+
+Why Use It?
+
+This technique targets directory-based caching rules. Many CDN configurations use rules like "Cache everything that lives inside the /assets/ or /static/ directory" rather than relying solely on file extensions.
+
+    Cache View: The CDN inspects the beginning of the path (/assets/css/), matches its static directory caching rule, and marks the request as cacheable without normalizing the ..%2f sequence.
+
+    Backend View: The web server or framework decodes %2f (/), resolves the directory traversal (/assets/css/../../account/profile), and executes the dynamic /account/profile controller.
+
+When to Use
+
+Use this when the target CDN does not cache based on file extensions, but instead uses strict directory-level caching rules (e.g., caching everything under /static/ or /public/).
+
 8. Defensive Engineering & Remediation
 
 To make an application secure against Web Cache Deception, apply defenses at both the application server layer and the cache/CDN layer:
