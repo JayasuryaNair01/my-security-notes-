@@ -1,0 +1,85 @@
+Access Control Vulnerability Cheat Sheet
+
+1. What is it?
+
+Access control vulnerabilities occur when an application fails to properly restrict what authenticated users can do or see. This manifests as:
+
+Horizontal Privilege Escalation (IDOR): User A accesses or modifies data belonging to another user of the same privilege level (e.g., viewing /api/user/101 while logged in as user 102).
+
+Vertical Privilege Escalation: Standard user accesses administrative functions or pages due to missing function-level access controls (e.g., navigating directly to /admin/settings).
+
+2. Do you need info about the victim?
+
+Usually, yes—specifically identifiers or predictable parameters belonging to the target resource or user.
+
+    Predictable IDs: If user accounts use sequential integers (/user/1042/profile), attackers can easily iterate through them.
+
+    Opaque IDs / UUIDs: If random UUIDs are used, attackers must first obtain a valid UUID via information disclosure, search functions, or parameter tampering elsewhere in the application.
+    
+3. How Attackers Exploit Access Controls (Delivery Vectors)
+
+Method A: Parameter & ID Manipulation (IDOR)
+
+Changing predictable resource identifiers directly in the URL query string, path parameters, or JSON request bodies:
+
+Method B: HTTP Method Tampering
+
+Switching the HTTP verb on sensitive endpoints where permissions are inconsistently checked:
+
+Method C: Hidden UI & Direct URL Navigation
+
+Accessing administrative functions that lack server-side authorization checks simply by typing the URL directly, even if the UI button is hidden from standard users.
+
+4. Recon & Fingerprinting
+
+Look for these indicators in your Burp HTTP history:
+
+    Sequential Identifiers: Parameters like id=, user_id=, account=, or doc_id= incrementing by 1.
+
+    Hidden API Endpoints: Discovering management endpoints (/api/admin/, /internal/metrics) via client-side JavaScript files or directory bruteforcing.
+
+    Role/Permission Indicators: Local storage or cookies containing explicit permission flags (e.g., is_admin: false, role: "standard").
+    
+5. Verification Criteria (Is it actually vulnerable?)
+
+Verify these three conditions in order before declaring a true positive:
+
+    Context Switch: Authenticate as low-privileged User A and request a resource belonging strictly to User B.
+
+    State Independence: The server returns a 200 OK status code along with complete private object data instead of a 403 Forbidden or 401 Unauthorized.
+
+    Action Execution: If testing write/delete access, confirm that User A's request successfully modifies or deletes User B's data on the backend.
+    
+6. Tool Execution Frameworks
+A. Burp Suite (Manual & Intruder Workflow)
+
+    Capture & Send to Repeater: Intercept a request containing a user ID or resource parameter. Swap the parameter value with another user's ID while keeping your own session cookie active.
+
+    Intruder Fuzzing: Send the request to Burp Intruder, place a payload marker on the ID parameter, and fuzz numbers or UUID lists to check for authorization bypasses across multiple accounts.
+
+B. Burp Extension (Autorize)
+
+    Configure Autorize with a low-privileged session cookie and an administrative session cookie.
+
+    Browse the application normally as the low-privileged user. Autorize automatically replays every request using the admin session (or vice versa) and flags discrepancies in response length or status codes (200 OK vs 403 Forbidden).
+    
+7. Attack Variations & Bypasses
+
+Variation 1: Multi-Step Function Bypass
+
+Skipping validation steps in a multi-stage workflow (e.g., directly submitting the final checkout or role-change API endpoint without completing the mandatory payment or approval step).
+Variation 2: Parameter Pollution & Mass Assignment
+
+Adding administrative fields to a standard update request:
+
+8. Defensive Engineering & Remediation
+
+To secure applications against access control flaws, enforce checks at both the code and architecture levels:
+
+Object-Level Authorization (BOLA/IDOR Defense): Always verify that the currently authenticated user session explicitly owns or has permission to access the requested resource ID:
+
+Centralized Access Control Middleware: Implement role-based access control (RBAC) frameworks that run globally across route groups rather than relying on individual developers to remember manual checks.
+
+Use Unpredictable Identifiers: Replace sequential integers with cryptographically secure random UUIDv4 identifiers to make enumeration infeasible.
+
+Deny by Default: Design routing frameworks to deny all access by default, explicitly requiring whitelist rules to open endpoints to specific user roles.
