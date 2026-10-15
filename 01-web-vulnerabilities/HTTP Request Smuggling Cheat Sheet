@@ -1,0 +1,61 @@
+HTTP Request Smuggling Cheat Sheet
+
+1. What is it?
+
+HTTP Request Smuggling happens when a frontend server (like a load balancer or reverse proxy) and a backend server disagree on where one HTTP request ends and the next one begins.
+
+Because they interpret headers like Content-Length (CL) and Transfer-Encoding (TE) differently, an attacker can "smuggle" a hidden piece of a request inside a normal one. The frontend thinks it's all one request, but the backend splits it into two, allowing the attacker to hijack other users' requests, steal sessions, or poison caches.
+
+2. Timing and traffic matter:
+
+Shared Backend Connection: The attack relies on connection reuse. The victim must make a request right after you, causing their browser's request to be appended to your smuggled prefix on the backend.
+
+Active Traffic: It works best on busy applications where users are constantly browsing.
+
+3. Delivery vectors
+
+Method A: CL.TE (Content-Length / Transfer-Encoding)
+    The frontend uses the Content-Length header to measure the request, while the backend uses Transfer-Encoding: chunked. The frontend passes the whole block through, but the backend stops processing early, leaving the leftover text as a "smuggled" second request.
+
+Method B: TE.CL (Transfer-Encoding / Content-Length)
+    The reverse of CL.TE. The frontend processes chunked encoding, while the backend relies on Content-Length.
+
+Method C: TE.TE (Obfuscated Transfer-Encoding)
+    Both servers support chunked encoding, but the attacker obfuscates the header on one side (e.g., Transfer-Encoding: xchunked or putting a space before the colon) so only one server ignores it, turning it into a CL.TE or TE.CL bug.
+    
+4. Reconnaissance & Fingerprinting
+
+Look for these indicators during testing:
+
+    Server Headers: Check the Server or X-Powered-By headers in responses to see what technology stack is handling front-end vs. back-end proxy routing.
+
+    Differing Tech Stacks: If an app uses an AWS Application Load Balancer (ALB) in front of an IIS or Gunicorn backend, parsing discrepancies are common.
+
+    Timing Clues: Sending a request with conflicting Content-Length and Transfer-Encoding headers that results in a time delay (the backend is hanging, waiting for the rest of a chunked body) is a major red flag.
+    
+5. Verification Criteria (Is it actually vulnerable?)
+
+Verify these conditions before confirming a bug:
+
+    Differential Response: Sending a request with conflicting headers causes an abnormal response or a noticeable time delay compared to normal traffic.
+
+    Request Queue Poisoning: A subsequent, unrelated request (or your own follow-up probe) receives the response meant for the smuggled request (e.g., getting a 404 or an admin panel page unexpectedly).
+
+6. Attack Variations &Bypasses
+
+Variation 1: Classic CL.TE Smuggling
+Smuggling a prefix like GET /admin so that the next innocent user's browser request gets tacked onto it, letting the attacker view admin pages.
+
+Variation 2: Web Cache Poisoning via Smuggling
+Smuggling a request for a static resource with a fake header, tricking the caching proxy into caching malicious responses for all regular users.
+
+Variation 3: Reflected XSS via Request Smuggling
+Smuggling headers like User-Agent containing script payloads that get stored or reflected back to subsequent users.
+
+7. Defensive Engineering & Remediation
+
+    Normalize Requests at the Frontend: Configure front-end proxies to normalize incoming requests, reject ambiguous requests with both Content-Length and Transfer-Encoding, and drop invalid chunked syntax.
+
+    Use HTTP/2 End-to-End: HTTP/2 uses a robust framing mechanism that eliminates ambiguity over request lengths, completely preventing traditional request smuggling between proxies and backends.
+
+    Keep Infrastructure Updated: Ensure load balancers and web servers are patched and configured correctly to handle HTTP parsing strictly.
